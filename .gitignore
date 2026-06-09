@@ -213,3 +213,6 @@ scripts/snapshot_dumps/
 # Pipeline state (processed post IDs)
 pipeline_state/
 processed_posts.json
+
+# Google OAuth token (contains user credentials)
+token.json
