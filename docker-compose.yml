@@ -21,7 +21,7 @@ services:
   pipeline:
     build: .
     entrypoint: ["python", "-m", "pipeline"]
-    command: ["--dry-run"]
+    command: ["--dry-run", "--loop", "--interval", "86400"]
     volumes:
       - linkedin-data:/home/pwuser/.linkedin-mcp
     environment:

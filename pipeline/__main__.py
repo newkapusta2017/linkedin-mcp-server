@@ -41,8 +41,9 @@ def _load_posts_from_file(path: str) -> list[dict]:
     raise ValueError(f"Unexpected JSON format in {path}")
 
 
-async def _scrape_saved_posts() -> list[dict]:
-    """Call the MCP server's get_saved_posts tool in-process."""
+async def _scrape_feed() -> list[dict]:
+    """Scrape the LinkedIn feed via the MCP server's get_feed tool."""
+    import hashlib
     import sys
 
     from fastmcp import Client
@@ -54,7 +55,7 @@ async def _scrape_saved_posts() -> list[dict]:
     try:
         mcp = create_mcp_server()
         async with Client(mcp) as client:
-            result = await client.call_tool("get_saved_posts")
+            result = await client.call_tool("get_feed", {"num_posts": 5})
     finally:
         sys.argv = saved_argv
 
@@ -62,9 +63,49 @@ async def _scrape_saved_posts() -> list[dict]:
     for content in contents:
         if hasattr(content, "text"):
             data = json.loads(content.text)
-            return data.get("posts", [])
+            if data.get("section_errors"):
+                logger.warning(
+                    "Scraping errors: %s",
+                    json.dumps(data["section_errors"], indent=2, ensure_ascii=False),
+                )
 
-    logger.warning("get_saved_posts returned no text content")
+            feed_text = data.get("sections", {}).get("feed", "")
+            refs = data.get("references", {}).get("feed", [])
+
+            logger.info(
+                "Feed result: %d chars text, %d references",
+                len(feed_text),
+                len(refs),
+            )
+            if feed_text:
+                logger.info("Feed preview: %.300s", feed_text)
+
+            if not feed_text:
+                return []
+
+            posts = []
+            for ref in refs:
+                url = ref.get("url", "")
+                if not url:
+                    continue
+                full_url = (
+                    f"https://www.linkedin.com{url}"
+                    if url.startswith("/")
+                    else url
+                )
+                post_id = hashlib.sha256(full_url.encode()).hexdigest()[:16]
+                posts.append(
+                    {
+                        "post_id": post_id,
+                        "author": "",
+                        "text": feed_text,
+                        "post_url": full_url,
+                    }
+                )
+
+            return posts
+
+    logger.warning("get_feed returned no text content")
     return []
 
 
@@ -77,7 +118,15 @@ def _run_pipeline(posts: list[dict], *, dry_run: bool = False) -> int:
 
     logger.info("Processing %d new post(s)", len(new_posts))
 
-    classifications = classify_posts(new_posts, dry_run=dry_run)
+    seen_texts = set()
+    unique_posts = []
+    for p in new_posts:
+        t = p.get("text", "")
+        if t not in seen_texts:
+            seen_texts.add(t)
+            unique_posts.append(p)
+
+    classifications = classify_posts(unique_posts, dry_run=dry_run)
     events = [c for c in classifications if c["classification"] != "none"]
 
     if not events:
@@ -153,9 +202,9 @@ def main() -> None:
                 posts = _load_posts_from_file(args.input)
                 logger.info("Loaded %d posts from %s", len(posts), args.input)
             else:
-                logger.info("Scraping saved posts from LinkedIn")
-                posts = asyncio.run(_scrape_saved_posts())
-                logger.info("Scraped %d posts", len(posts))
+                logger.info("Scraping LinkedIn feed")
+                posts = asyncio.run(_scrape_feed())
+                logger.info("Scraped %d posts from feed", len(posts))
 
             created = _run_pipeline(posts, dry_run=args.dry_run)
             logger.info("Run #%d complete — %d event(s) created", run_count, created)
