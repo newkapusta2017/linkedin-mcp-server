@@ -209,3 +209,7 @@ scripts/snapshot_dumps/
 
 # Debug artifacts
 .debug/
+
+# Pipeline state (processed post IDs)
+pipeline_state/
+processed_posts.json
