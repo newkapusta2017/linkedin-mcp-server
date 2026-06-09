@@ -19,7 +19,10 @@ RUN useradd -m -s /bin/bash pwuser
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/pipeline /app/pipeline
+COPY --from=builder /app/test_posts.json /app/test_posts.json
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/patchright
 
 RUN patchright install-deps chromium && \

@@ -1,9 +1,35 @@
 services:
   linkedin-mcp:
-    image: stickerdaniel/linkedin-mcp-server:4.13.3
+    build: .
     volumes:
-      - ~/.linkedin-mcp:/home/pwuser/.linkedin-mcp
+      - linkedin-data:/home/pwuser/.linkedin-mcp
     environment:
       - LOG_LEVEL=WARNING
     stdin_open: true
     tty: true
+
+  # One-shot: copies Windows profile into a Linux-native volume
+  # where chmod works.  Run once after `uv run ... --login`:
+  #   docker-compose run --rm init-profile
+  init-profile:
+    image: busybox
+    volumes:
+      - ~/.linkedin-mcp:/src:ro
+      - linkedin-data:/dest
+    command: ["sh", "-c", "cp -a /src/. /dest/ && chown -R 1000:1000 /dest && echo 'Profile copied'"]
+
+  pipeline:
+    build: .
+    entrypoint: ["python", "-m", "pipeline"]
+    command: ["--dry-run"]
+    volumes:
+      - linkedin-data:/home/pwuser/.linkedin-mcp
+    environment:
+      - LOG_LEVEL=INFO
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
+      - GOOGLE_CREDENTIALS_FILE=${GOOGLE_CREDENTIALS_FILE:-}
+      - GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID:-}
+
+volumes:
+  linkedin-data:

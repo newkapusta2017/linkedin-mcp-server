@@ -43,14 +43,23 @@ def _load_posts_from_file(path: str) -> list[dict]:
 
 async def _scrape_saved_posts() -> list[dict]:
     """Call the MCP server's get_saved_posts tool in-process."""
+    import sys
+
     from fastmcp import Client
 
-    from linkedin_mcp_server.server import mcp
+    from linkedin_mcp_server.server import create_mcp_server
 
-    async with Client(mcp) as client:
-        result = await client.call_tool("get_saved_posts")
+    saved_argv = sys.argv
+    sys.argv = [sys.argv[0]]
+    try:
+        mcp = create_mcp_server()
+        async with Client(mcp) as client:
+            result = await client.call_tool("get_saved_posts")
+    finally:
+        sys.argv = saved_argv
 
-    for content in result:
+    contents = result.content if hasattr(result, "content") else result
+    for content in contents:
         if hasattr(content, "text"):
             data = json.loads(content.text)
             return data.get("posts", [])
