@@ -61,6 +61,88 @@ NONE_RESULT: dict[str, Any] = {
     "description": None,
 }
 
+INVITE_KEYWORDS = [
+    "einladung",
+    "einladen",
+    "laden ein",
+    "laden sie ein",
+    "invite",
+    "invitation",
+    "join us",
+    "anmeldung",
+    "register",
+]
+SAVE_DATE_KEYWORDS = [
+    "save the date",
+    "save-the-date",
+    "vormerken",
+    "save date",
+    "mark your calendar",
+]
+DATE_PATTERN = re.compile(
+    r"(\d{1,2})\.\s*(januar|februar|märz|april|mai|juni|juli|august|"
+    r"september|oktober|november|dezember)\s*(\d{4})",
+    re.IGNORECASE,
+)
+MONTH_MAP = {
+    "januar": "01",
+    "februar": "02",
+    "märz": "03",
+    "april": "04",
+    "mai": "05",
+    "juni": "06",
+    "juli": "07",
+    "august": "08",
+    "september": "09",
+    "oktober": "10",
+    "november": "11",
+    "dezember": "12",
+}
+TIME_PATTERN = re.compile(r"(\d{1,2})[:.:](\d{2})\s*(?:uhr|Uhr)?")
+
+
+def _classify_post_local(post: dict[str, Any]) -> dict[str, Any]:
+    """Keyword-based classifier for dry-run mode (no API needed)."""
+    text = (post.get("text") or "").lower()
+    author = post.get("author") or ""
+
+    classification = "none"
+    for kw in INVITE_KEYWORDS:
+        if kw in text:
+            classification = "invitation"
+            break
+    if classification == "none":
+        for kw in SAVE_DATE_KEYWORDS:
+            if kw in text:
+                classification = "save_the_date"
+                break
+
+    if classification == "none":
+        return dict(NONE_RESULT)
+
+    title = f"Event from {author}" if author else "LinkedIn Event"
+    date_str = None
+    m = DATE_PATTERN.search(post.get("text") or "")
+    if m:
+        day = m.group(1).zfill(2)
+        month = MONTH_MAP[m.group(2).lower()]
+        year = m.group(3)
+        date_str = f"{year}-{month}-{day}"
+
+    times = TIME_PATTERN.findall(post.get("text") or "")
+    start_time = f"{times[0][0].zfill(2)}:{times[0][1]}" if times else None
+    end_time = f"{times[1][0].zfill(2)}:{times[1][1]}" if len(times) > 1 else None
+
+    return {
+        "classification": classification,
+        "title": title,
+        "date": date_str,
+        "start_time": start_time,
+        "end_time": end_time,
+        "location": None,
+        "description": (post.get("text") or "")[:100],
+    }
+
 
 def _get_client() -> anthropic.Anthropic:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -116,6 +198,9 @@ def classify_post(post: dict[str, Any]) -> dict[str, Any]:
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        return dict(NONE_RESULT)
     except anthropic.AuthenticationError:
         logger.error("Invalid ANTHROPIC_API_KEY — check your key")
         return dict(NONE_RESULT)
@@ -147,20 +232,28 @@ def classify_post(post: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def classify_posts(posts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def classify_posts(
+    posts: list[dict[str, Any]], *, dry_run: bool = False
+) -> list[dict[str, Any]]:
     """Classify a list of posts, returning results with post metadata attached.
 
     Each returned dict contains the original ``post_id`` plus all
     classification fields.  Posts classified as ``"none"`` are included
     so the caller can decide whether to filter them.
+
+    When *dry_run* is True, uses a keyword heuristic instead of the API.
     """
+    classify_fn = _classify_post_local if dry_run else classify_post
+    if dry_run:
+        logger.info("Dry-run mode — using keyword classifier (no API)")
+
     results: list[dict[str, Any]] = []
 
     for post in posts:
         post_id = post.get("post_id", "unknown")
         logger.info("Classifying post %s", post_id)
 
-        classification = classify_post(post)
+        classification = classify_fn(post)
         classification["post_id"] = post_id
 
         logger.info(

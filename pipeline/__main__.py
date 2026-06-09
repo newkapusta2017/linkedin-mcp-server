@@ -59,7 +59,7 @@ async def _scrape_saved_posts() -> list[dict]:
     return []
 
 
-def _run_pipeline(posts: list[dict]) -> int:
+def _run_pipeline(posts: list[dict], *, dry_run: bool = False) -> int:
     """Run dedup → classify → calendar.  Returns the number of events created."""
     new_posts = get_new_saved_posts(posts)
     if not new_posts:
@@ -68,12 +68,25 @@ def _run_pipeline(posts: list[dict]) -> int:
 
     logger.info("Processing %d new post(s)", len(new_posts))
 
-    classifications = classify_posts(new_posts)
+    classifications = classify_posts(new_posts, dry_run=dry_run)
     events = [c for c in classifications if c["classification"] != "none"]
 
     if not events:
         logger.info("No events found in new posts")
         return 0
+
+    if dry_run:
+        logger.info("Dry-run: would create %d calendar event(s):", len(events))
+        for e in events:
+            logger.info(
+                "  → %s | %s | %s %s–%s",
+                e.get("classification"),
+                e.get("title"),
+                e.get("date") or "no date",
+                e.get("start_time") or "",
+                e.get("end_time") or "",
+            )
+        return len(events)
 
     logger.info("Found %d event(s), creating calendar entries", len(events))
     created = create_events(events)
@@ -100,6 +113,11 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_INTERVAL,
         help=f"Seconds between runs in --loop mode (default: {DEFAULT_INTERVAL})",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Use keyword classifier and skip calendar creation (no API keys needed)",
     )
     return parser.parse_args()
 
@@ -130,7 +148,7 @@ def main() -> None:
                 posts = asyncio.run(_scrape_saved_posts())
                 logger.info("Scraped %d posts", len(posts))
 
-            created = _run_pipeline(posts)
+            created = _run_pipeline(posts, dry_run=args.dry_run)
             logger.info("Run #%d complete — %d event(s) created", run_count, created)
 
         except Exception:

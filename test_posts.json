@@ -1,0 +1,25 @@
+{
+  "posts": [
+    {
+      "post_id": "test_invite_001",
+      "author": "Max Mustermann",
+      "text": "Wir laden Sie herzlich ein zum Workshop 'Digitale Transformation in der Wissenschaft' am 15. Juli 2026 von 14:00 bis 17:00 Uhr im Helmholtz-Zentrum Berlin. Anmeldung bis zum 1. Juli.",
+      "post_url": "https://www.linkedin.com/feed/update/test1",
+      "scraped_at": "2026-06-09T12:00:00Z"
+    },
+    {
+      "post_id": "test_save_date_002",
+      "author": "Universität zu Köln",
+      "text": "Save the Date! Die Jahrestagung Soziologie findet am 20. September 2026 in Köln statt. Mehr Infos folgen bald.",
+      "post_url": "https://www.linkedin.com/feed/update/test2",
+      "scraped_at": "2026-06-09T12:00:00Z"
+    },
+    {
+      "post_id": "test_none_003",
+      "author": "Anna Schmidt",
+      "text": "Freue mich über meine neue Position als Projektmanagerin bei Siemens! Danke an alle, die mich auf diesem Weg begleitet haben.",
+      "post_url": "https://www.linkedin.com/feed/update/test3",
+      "scraped_at": "2026-06-09T12:00:00Z"
+    }
+  ]
+}
