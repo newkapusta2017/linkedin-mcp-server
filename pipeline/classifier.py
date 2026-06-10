@@ -79,25 +79,32 @@ SAVE_DATE_KEYWORDS = [
     "save date",
     "mark your calendar",
 ]
-DATE_PATTERN = re.compile(
-    r"(\d{1,2})\.\s*(januar|februar|märz|april|mai|juni|juli|august|"
-    r"september|oktober|november|dezember)\s*(\d{4})",
-    re.IGNORECASE,
-)
 MONTH_MAP = {
     "januar": "01",
+    "january": "01",
     "februar": "02",
+    "february": "02",
     "märz": "03",
+    "march": "03",
     "april": "04",
     "mai": "05",
+    "may": "05",
     "juni": "06",
+    "june": "06",
     "juli": "07",
+    "july": "07",
     "august": "08",
     "september": "09",
     "oktober": "10",
+    "october": "10",
     "november": "11",
     "dezember": "12",
+    "december": "12",
 }
+DATE_PATTERN = re.compile(
+    r"(\d{1,2})[\.\s]\s*(" + "|".join(MONTH_MAP) + r")\s*(\d{4})",
+    re.IGNORECASE,
+)
 TIME_PATTERN = re.compile(r"(\d{1,2})[:.:](\d{2})\s*(?:uhr|Uhr)?")
 
 
