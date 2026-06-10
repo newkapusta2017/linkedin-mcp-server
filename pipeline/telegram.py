@@ -34,6 +34,11 @@ def _chat_id():
     return os.environ.get("LINKEDIN_CHAT_ID")
 
 
+def _reply_chat_id():
+    """DM chat for interactive prompts (replies don't work in channels)."""
+    return os.environ.get("LINKEDIN_REPLY_CHAT_ID") or _chat_id()
+
+
 def _api(method, **params):
     token = _token()
     if not token:
@@ -79,7 +84,7 @@ def notify_created(event, calendar_url=None):
 
 def notify_missing_date(event):
     """Send notification for an event without a date, asking user to reply."""
-    chat_id = _chat_id()
+    chat_id = _reply_chat_id()
     if not chat_id or not _token():
         return
 
