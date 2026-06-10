@@ -41,9 +41,10 @@ def _get_credentials(
 ) -> Credentials:
     """Load or create OAuth2 credentials for Google Calendar.
 
-    On the first run this opens a browser window for the OAuth consent
-    flow.  The resulting token is cached at *token_file* so subsequent
-    runs are non-interactive.
+    Tries in order:
+    1. Cached token from a previous run.
+    2. Application Default Credentials (``gcloud auth application-default login``).
+    3. OAuth2 client secrets file (opens browser for consent).
     """
     credentials_file = credentials_file or Path(
         os.environ.get("GOOGLE_CREDENTIALS_FILE", str(DEFAULT_CREDENTIALS_PATH))
@@ -61,17 +62,37 @@ def _get_credentials(
     if creds and creds.expired and creds.refresh_token:
         logger.info("Refreshing expired Google token")
         creds.refresh(Request())
-    else:
-        if not credentials_file.exists():
-            raise FileNotFoundError(
-                f"Google OAuth credentials file not found at {credentials_file}. "
-                "Download it from the Google Cloud Console (APIs & Services → "
-                "Credentials → OAuth 2.0 Client IDs) and place it there, or set "
-                "GOOGLE_CREDENTIALS_FILE to the correct path."
-            )
-        logger.info("Starting OAuth consent flow — a browser window will open")
-        flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), SCOPES)
-        creds = flow.run_local_server(port=0)
+        token_file.write_text(creds.to_json(), encoding="utf-8")
+        return creds
+
+    # Try Application Default Credentials (from gcloud auth)
+    try:
+        import google.auth
+
+        adc, _ = google.auth.default(scopes=SCOPES)
+        if adc:
+            logger.info("Using Application Default Credentials (gcloud)")
+            return adc
+    except Exception:
+        pass
+
+    # Try access token from env var (set via: gcloud auth print-access-token)
+    token = os.environ.get("GOOGLE_ACCESS_TOKEN", "")
+    if token and len(token) > 20:
+        logger.info("Using GOOGLE_ACCESS_TOKEN from environment")
+        return Credentials(token=token)
+
+    if not credentials_file.exists():
+        raise FileNotFoundError(
+            f"No Google credentials found. Either run:\n"
+            f"  gcloud auth application-default login "
+            f"--scopes=https://www.googleapis.com/auth/cloud-platform,"
+            f"https://www.googleapis.com/auth/calendar.events\n"
+            f"Or download OAuth2 client secrets to {credentials_file}"
+        )
+    logger.info("Starting OAuth consent flow — a browser window will open")
+    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), SCOPES)
+    creds = flow.run_local_server(port=0)
 
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(creds.to_json(), encoding="utf-8")
