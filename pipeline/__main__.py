@@ -24,8 +24,9 @@ from dotenv import load_dotenv
 
 from pipeline.calendar import create_events
 from pipeline.classifier import classify_posts
-from pipeline.state import get_new_saved_posts
-from pipeline.telegram import notify_created, notify_missing_date, process_replies
+from pipeline.state import PostStore, get_new_saved_posts
+from pipeline.telegram import notify_created, notify_missing_date
+from pipeline.users import list_active_users, user_dir
 
 logger = logging.getLogger("pipeline")
 
@@ -42,16 +43,20 @@ def _load_posts_from_file(path: str) -> list[dict]:
     raise ValueError(f"Unexpected JSON format in {path}")
 
 
-async def _scrape_feed() -> list[dict]:
+async def _scrape_feed(profile_dir=None) -> list[dict]:
     """Scrape the LinkedIn feed using standalone Patchright scraper."""
     from pipeline.scraper import scrape_feed
 
-    return await scrape_feed(num_posts=10, headless=True, saved=True)
+    return await scrape_feed(num_posts=10, headless=True, saved=True,
+                             profile_dir=profile_dir)
 
 
-def _run_pipeline(posts: list[dict], *, dry_run: bool = False) -> int:
-    """Run dedup → classify → calendar.  Returns the number of events created."""
-    new_posts = get_new_saved_posts(posts)
+def _run_pipeline(posts: list[dict], *, dry_run: bool = False,
+                  token_file=None, state_file=None,
+                  chat_id=None, pending_file=None) -> int:
+    """Run dedup -> classify -> calendar. Returns the number of events created."""
+    store = PostStore(state_file) if state_file else None
+    new_posts = get_new_saved_posts(posts, store=store)
     if not new_posts:
         logger.info("No new posts to process")
         return 0
@@ -84,7 +89,7 @@ def _run_pipeline(posts: list[dict], *, dry_run: bool = False) -> int:
         logger.info("Dry-run: would create %d calendar event(s):", len(events))
         for e in events:
             logger.info(
-                "  → %s | %s | %s %s–%s",
+                "  -> %s | %s | %s %s-%s",
                 e.get("classification"),
                 e.get("title"),
                 e.get("date") or "no date",
@@ -99,14 +104,14 @@ def _run_pipeline(posts: list[dict], *, dry_run: bool = False) -> int:
     created_count = 0
     if with_date:
         logger.info("Creating %d calendar event(s) with dates", len(with_date))
-        created = create_events(with_date)
+        created = create_events(with_date, token_file=token_file)
         created_count = len(created)
         for ev, cal_ev in zip(with_date, created):
-            notify_created(ev, cal_ev.get("htmlLink"))
+            notify_created(ev, cal_ev.get("htmlLink"), chat_id=chat_id)
 
     for ev in without_date:
-        logger.info("Event without date — sending Telegram prompt: %s", ev.get("title"))
-        notify_missing_date(ev)
+        logger.info("Event without date -- sending Telegram prompt: %s", ev.get("title"))
+        notify_missing_date(ev, chat_id=chat_id, pending_file=pending_file)
 
     return created_count
 
@@ -164,8 +169,19 @@ def main() -> None:
     if args.heartbeat:
         from pipeline.scraper import heartbeat
 
-        alive = asyncio.run(heartbeat())
-        raise SystemExit(0 if alive else 1)
+        users = list_active_users()
+        if not users:
+            logger.warning("No active users")
+            raise SystemExit(1)
+        all_alive = True
+        for user in users:
+            pd = user_dir(user["id"]) / "profile"
+            logger.info("Heartbeat for user %s", user["id"])
+            alive = asyncio.run(heartbeat(profile_dir=pd))
+            if not alive:
+                logger.warning("Session expired for user %s", user["id"])
+                all_alive = False
+        raise SystemExit(0 if all_alive else 1)
 
     if args.bot:
         from pipeline.telegram import run_bot_loop
@@ -173,35 +189,45 @@ def main() -> None:
         run_bot_loop()
         return
 
-    # Process any pending date replies from previous runs
-    reply_events = process_replies()
-    if reply_events:
-        logger.info("Processing %d pending date replies", len(reply_events))
-        created = create_events(reply_events)
-        for ev, cal_ev in zip(reply_events, created):
-            notify_created(ev, cal_ev.get("htmlLink"))
-        logger.info("Created %d calendar events from replies", len(created))
-
     run_count = 0
 
     while True:
         run_count += 1
         logger.info("=== Pipeline run #%d ===", run_count)
 
-        try:
-            if args.input:
-                posts = _load_posts_from_file(args.input)
-                logger.info("Loaded %d posts from %s", len(posts), args.input)
-            else:
-                logger.info("Scraping LinkedIn feed")
-                posts = asyncio.run(_scrape_feed())
-                logger.info("Scraped %d posts from feed", len(posts))
+        users = list_active_users()
+        if not users:
+            logger.warning("No active users found")
 
-            created = _run_pipeline(posts, dry_run=args.dry_run)
-            logger.info("Run #%d complete — %d event(s) created", run_count, created)
+        for user in users:
+            uid = user["id"]
+            ud = user_dir(uid)
+            logger.info("--- Processing user: %s ---", uid)
 
-        except Exception:
-            logger.exception("Run #%d failed", run_count)
+            try:
+                if args.input:
+                    posts = _load_posts_from_file(args.input)
+                    logger.info("Loaded %d posts from %s", len(posts), args.input)
+                else:
+                    logger.info("Scraping LinkedIn feed for %s", uid)
+                    posts = asyncio.run(_scrape_feed(
+                        profile_dir=ud / "profile"))
+                    logger.info("Scraped %d posts from feed", len(posts))
+
+                created = _run_pipeline(
+                    posts,
+                    dry_run=args.dry_run,
+                    token_file=ud / "token.json",
+                    state_file=ud / "processed_posts.json",
+                    chat_id=user["telegram_chat_id"],
+                    pending_file=ud / "pending_events.json",
+                )
+                logger.info("User %s: %d event(s) created", uid, created)
+
+            except Exception:
+                logger.exception("Pipeline failed for user %s", uid)
+
+        logger.info("Run #%d complete", run_count)
 
         if not args.loop:
             break
