@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 from pipeline.calendar import create_events
 from pipeline.classifier import classify_posts
 from pipeline.state import get_new_saved_posts
+from pipeline.telegram import notify_created, notify_missing_date, process_replies
 
 logger = logging.getLogger("pipeline")
 
@@ -92,9 +93,22 @@ def _run_pipeline(posts: list[dict], *, dry_run: bool = False) -> int:
             )
         return len(events)
 
-    logger.info("Found %d event(s), creating calendar entries", len(events))
-    created = create_events(events)
-    return len(created)
+    with_date = [e for e in events if e.get("date")]
+    without_date = [e for e in events if not e.get("date")]
+
+    created_count = 0
+    if with_date:
+        logger.info("Creating %d calendar event(s) with dates", len(with_date))
+        created = create_events(with_date)
+        created_count = len(created)
+        for ev, cal_ev in zip(with_date, created):
+            notify_created(ev, cal_ev.get("htmlLink"))
+
+    for ev in without_date:
+        logger.info("Event without date — sending Telegram prompt: %s", ev.get("title"))
+        notify_missing_date(ev)
+
+    return created_count
 
 
 def _parse_args() -> argparse.Namespace:
@@ -128,6 +142,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Just visit LinkedIn to keep session alive, then exit",
     )
+    parser.add_argument(
+        "--bot",
+        action="store_true",
+        help="Run Telegram bot loop to handle date replies for pending events",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +166,21 @@ def main() -> None:
 
         alive = asyncio.run(heartbeat())
         raise SystemExit(0 if alive else 1)
+
+    if args.bot:
+        from pipeline.telegram import run_bot_loop
+
+        run_bot_loop()
+        return
+
+    # Process any pending date replies from previous runs
+    reply_events = process_replies()
+    if reply_events:
+        logger.info("Processing %d pending date replies", len(reply_events))
+        created = create_events(reply_events)
+        for ev, cal_ev in zip(reply_events, created):
+            notify_created(ev, cal_ev.get("htmlLink"))
+        logger.info("Created %d calendar events from replies", len(created))
 
     run_count = 0
 
