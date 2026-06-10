@@ -490,6 +490,33 @@ async def scrape_feed(
         await pw.stop()
 
 
+async def heartbeat() -> bool:
+    """Visit LinkedIn briefly to keep the session alive.
+
+    Returns True if the session is still valid, False if login is required.
+    """
+    profile = str(PROFILE_DIR)
+    if not PROFILE_DIR.exists():
+        logger.warning("No LinkedIn profile at %s", PROFILE_DIR)
+        return False
+
+    logger.info("Heartbeat: checking LinkedIn session")
+    pw, browser, page = await _launch_browser(headless=True, profile=profile)
+    try:
+        await page.goto(FEED_URL, wait_until="domcontentloaded", timeout=30000)
+        if "/login" in page.url:
+            logger.warning("Heartbeat: session expired (redirected to login)")
+            return False
+        logger.info("Heartbeat: session alive")
+        return True
+    except Exception as e:
+        logger.error("Heartbeat failed: %s", e)
+        return False
+    finally:
+        await browser.close()
+        await pw.stop()
+
+
 async def playground(saved: bool = False) -> None:
     """Open a visible browser, scrape, and print results."""
     logging.basicConfig(

@@ -123,6 +123,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use keyword classifier and skip calendar creation (no API keys needed)",
     )
+    parser.add_argument(
+        "--heartbeat",
+        action="store_true",
+        help="Just visit LinkedIn to keep session alive, then exit",
+    )
     return parser.parse_args()
 
 
@@ -136,6 +141,12 @@ def main() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    if args.heartbeat:
+        from pipeline.scraper import heartbeat
+
+        alive = asyncio.run(heartbeat())
+        raise SystemExit(0 if alive else 1)
 
     run_count = 0
 
