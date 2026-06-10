@@ -29,7 +29,7 @@ _NEXT_WS_PORT = 6080
 
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
-    return templates.TemplateResponse("setup.html", {"request": request, "error": None})
+    return templates.TemplateResponse(request, "setup.html", {"error": None})
 
 
 @app.post("/setup", response_class=HTMLResponse)
@@ -37,16 +37,16 @@ async def setup_submit(request: Request, name: str = Form(...),
                        telegram_chat_id: str = Form(...)):
     user_id = re.sub(r"[^a-z0-9]", "", name.lower())
     if not user_id:
-        return templates.TemplateResponse("setup.html", {
-            "request": request, "error": "Name must contain letters or numbers"
+        return templates.TemplateResponse(request, "setup.html", {
+            "error": "Name must contain letters or numbers"
         })
     if get_user(user_id):
-        return templates.TemplateResponse("setup.html", {
-            "request": request, "error": f"User '{user_id}' already exists"
+        return templates.TemplateResponse(request, "setup.html", {
+            "error": f"User '{user_id}' already exists"
         })
     if not re.match(r"-?\d+$", telegram_chat_id):
-        return templates.TemplateResponse("setup.html", {
-            "request": request, "error": "Chat ID must be a number"
+        return templates.TemplateResponse(request, "setup.html", {
+            "error": "Chat ID must be a number"
         })
 
     create_user(user_id, name, telegram_chat_id)
@@ -136,13 +136,13 @@ async def login_page(request: Request, user_id: str):
         host = request.headers.get("host", "localhost").split(":")[0]
         vnc_url = f"http://{host}:{ws_port}/vnc.html?autoconnect=true&resize=scale"
     except RuntimeError as e:
-        return templates.TemplateResponse("login.html", {
-            "request": request, "user_id": user_id, "vnc_url": None,
+        return templates.TemplateResponse(request, "login.html", {
+            "user_id": user_id, "vnc_url": None,
             "error": str(e),
         })
 
-    return templates.TemplateResponse("login.html", {
-        "request": request, "user_id": user_id, "vnc_url": vnc_url,
+    return templates.TemplateResponse(request, "login.html", {
+        "user_id": user_id, "vnc_url": vnc_url,
         "error": None,
     })
 
@@ -185,8 +185,8 @@ async def calendar_page(request: Request, user_id: str):
     )
     auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
 
-    return templates.TemplateResponse("calendar.html", {
-        "request": request, "auth_url": auth_url, "error": None,
+    return templates.TemplateResponse(request, "calendar.html", {
+        "auth_url": auth_url, "error": None,
     })
 
 
@@ -211,6 +211,6 @@ async def calendar_callback(user_id: str, code: str, request: Request):
     update_status(user_id, "active")
 
     user = get_user(user_id)
-    return templates.TemplateResponse("success.html", {
-        "request": request, "name": user["name"],
+    return templates.TemplateResponse(request, "success.html", {
+        "name": user["name"],
     })
