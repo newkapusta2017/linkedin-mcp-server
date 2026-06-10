@@ -475,15 +475,17 @@ async def scrape_feed(
     num_posts: int = 10,
     headless: bool = True,
     saved: bool = False,
+    profile_dir: Path | None = None,
 ) -> list[dict]:
     """Scrape LinkedIn feed or saved-posts page.
 
     Returns a list of dicts with keys: post_id, author, text, post_url.
     """
-    profile = str(PROFILE_DIR)
-    if not PROFILE_DIR.exists():
+    _profile = profile_dir or PROFILE_DIR
+    profile = str(_profile)
+    if not _profile.exists():
         raise RuntimeError(
-            f"No LinkedIn profile at {PROFILE_DIR}. "
+            f"No LinkedIn profile at {_profile}. "
             "Run: uv run python -m linkedin_mcp_server --login"
         )
 
@@ -537,14 +539,15 @@ async def scrape_feed(
         await pw.stop()
 
 
-async def heartbeat() -> bool:
+async def heartbeat(profile_dir: Path | None = None) -> bool:
     """Visit LinkedIn briefly to keep the session alive.
 
     Returns True if the session is still valid, False if login is required.
     """
-    profile = str(PROFILE_DIR)
-    if not PROFILE_DIR.exists():
-        logger.warning("No LinkedIn profile at %s", PROFILE_DIR)
+    _profile = profile_dir or PROFILE_DIR
+    profile = str(_profile)
+    if not _profile.exists():
+        logger.warning("No LinkedIn profile at %s", _profile)
         return False
 
     logger.info("Heartbeat: checking LinkedIn session")
