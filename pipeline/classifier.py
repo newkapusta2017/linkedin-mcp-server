@@ -199,8 +199,8 @@ def classify_post(post: dict[str, Any]) -> dict[str, Any]:
             messages=[{"role": "user", "content": user_message}],
         )
     except RuntimeError as exc:
-        logger.error("%s", exc)
-        return dict(NONE_RESULT)
+        logger.warning("%s — falling back to keyword classifier", exc)
+        return _classify_post_local(post)
     except anthropic.AuthenticationError:
         logger.error("Invalid ANTHROPIC_API_KEY — check your key")
         return dict(NONE_RESULT)
