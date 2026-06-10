@@ -325,6 +325,42 @@ EXTRACT_SINGLE_POST_JS = """
         if (longest) bodyText = longest;
     }
 
+    // Look for a LinkedIn event card (date/time, title, location)
+    // Find "Event anzeigen"/"View event" link by scanning anchors
+    let eventBtn = main.querySelector('a[href*="/events/"]');
+    if (!eventBtn) {
+        const allAnchors = main.querySelectorAll('a');
+        for (const a of allAnchors) {
+            const t = (a.innerText || '').trim().toLowerCase();
+            if (t === 'event anzeigen' || t === 'view event') {
+                eventBtn = a;
+                break;
+            }
+        }
+    }
+    if (eventBtn) {
+        let card = eventBtn.closest('div');
+        if (card) card = card.parentElement;
+        if (card) {
+            const cardText = card.innerText || '';
+            if (cardText.length > 5) {
+                bodyText = bodyText + '\\n' + cardText;
+            }
+        }
+    }
+    // Also try: scan for date-time pattern in the full page text
+    // "Do, 3. Dez., 17:30 bis 19:00" or similar
+    const eventMatch = fullText.match(
+        /(?:Mo|Di|Mi|Do|Fr|Sa|So|Mon|Tue|Wed|Thu|Fri|Sat|Sun)[.,]\\s*\\d{1,2}\\.\\s*(?:Jan|Feb|Mär|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez|Mar|May|June?|July?|Oct|Dec)[.,]*\\s*(?:\\d{4})?[^\\n]*(?:bis|to|–|-)[^\\n]*/i
+    );
+    if (eventMatch && !bodyText.includes(eventMatch[0])) {
+        // Grab a few lines around the match for title/location
+        const idx = fullText.indexOf(eventMatch[0]);
+        const context = fullText.substring(idx, Math.min(idx + 300, fullText.length));
+        const contextLines = context.split('\\n').slice(0, 5).join('\\n');
+        bodyText = bodyText + '\\n' + contextLines;
+    }
+
     return { author, text: bodyText };
 }
 """
@@ -379,6 +415,17 @@ async def _scrape_saved_posts(page, num_posts, headless):
         try:
             await _navigate(page, link)
             await page.wait_for_timeout(3000)
+
+            # Expand truncated post text ("...more" / "...mehr")
+            try:
+                more_btn = page.locator(
+                    "button:has-text('more'), button:has-text('mehr')"
+                ).first
+                if await more_btn.is_visible(timeout=2000):
+                    await more_btn.click()
+                    await page.wait_for_timeout(1000)
+            except Exception:
+                pass
 
             data = await page.evaluate(EXTRACT_SINGLE_POST_JS)
             text = data.get("text", "")

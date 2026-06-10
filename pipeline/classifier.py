@@ -80,29 +80,22 @@ SAVE_DATE_KEYWORDS = [
     "mark your calendar",
 ]
 MONTH_MAP = {
-    "januar": "01",
-    "january": "01",
-    "februar": "02",
-    "february": "02",
-    "märz": "03",
-    "march": "03",
-    "april": "04",
-    "mai": "05",
-    "may": "05",
-    "juni": "06",
-    "june": "06",
-    "juli": "07",
-    "july": "07",
-    "august": "08",
-    "september": "09",
-    "oktober": "10",
-    "october": "10",
-    "november": "11",
-    "dezember": "12",
-    "december": "12",
+    "januar": "01", "jan": "01", "january": "01",
+    "februar": "02", "feb": "02", "february": "02",
+    "märz": "03", "mär": "03", "march": "03", "mar": "03",
+    "april": "04", "apr": "04",
+    "mai": "05", "may": "05",
+    "juni": "06", "jun": "06", "june": "06",
+    "juli": "07", "jul": "07", "july": "07",
+    "august": "08", "aug": "08",
+    "september": "09", "sep": "09", "sept": "09",
+    "oktober": "10", "okt": "10", "october": "10", "oct": "10",
+    "november": "11", "nov": "11",
+    "dezember": "12", "dez": "12", "december": "12", "dec": "12",
 }
+_MONTH_NAMES = sorted(MONTH_MAP, key=len, reverse=True)
 DATE_PATTERN = re.compile(
-    r"(\d{1,2})[\.\s]\s*(" + "|".join(MONTH_MAP) + r")\s*(\d{4})",
+    r"(\d{1,2})[\.\s]\s*(" + "|".join(_MONTH_NAMES) + r")\.?\s*,?\s*(\d{4})?",
     re.IGNORECASE,
 )
 TIME_PATTERN = re.compile(r"(\d{1,2})[:.:](\d{2})\s*(?:uhr|Uhr)?")
@@ -133,7 +126,7 @@ def _classify_post_local(post: dict[str, Any]) -> dict[str, Any]:
     if m:
         day = m.group(1).zfill(2)
         month = MONTH_MAP[m.group(2).lower()]
-        year = m.group(3)
+        year = m.group(3) or str(__import__("datetime").date.today().year)
         date_str = f"{year}-{month}-{day}"
 
     times = TIME_PATTERN.findall(post.get("text") or "")
