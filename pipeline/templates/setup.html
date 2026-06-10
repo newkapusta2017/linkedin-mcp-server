@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>LinkedIn Pipeline - Setup</title>
+<style>
+  body { font-family: sans-serif; max-width: 500px; margin: 60px auto; padding: 0 20px; }
+  input { width: 100%; padding: 10px; margin: 8px 0 20px; box-sizing: border-box; font-size: 16px; }
+  button { padding: 12px 24px; font-size: 16px; background: #0a66c2; color: white; border: none; border-radius: 4px; cursor: pointer; }
+  .error { color: red; margin-bottom: 16px; }
+  label { font-weight: bold; }
+</style>
+</head>
+<body>
+  <h1>LinkedIn Pipeline Setup</h1>
+  <p>Step 1 of 3: Register your account</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post">
+    <label>Name (lowercase, no spaces)</label>
+    <input name="name" pattern="[a-z0-9]+" required placeholder="e.g. alex">
+    <label>Telegram Chat ID</label>
+    <input name="telegram_chat_id" pattern="-?[0-9]+" required placeholder="e.g. 180163996">
+    <button type="submit">Next: LinkedIn Login</button>
+  </form>
+</body>
+</html>
