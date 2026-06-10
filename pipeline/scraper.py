@@ -221,6 +221,209 @@ def _parse_feed_text(raw_text: str) -> list[dict]:
     return posts
 
 
+FIND_SAVED_LINKS_JS = """
+() => {
+    const links = [];
+    const seen = new Set();
+    const main = document.querySelector('main') || document.body;
+
+    // Find all links that point to posts or feed updates
+    const anchors = main.querySelectorAll(
+        'a[href*="/feed/update/"], a[href*="/posts/"]'
+    );
+    for (const a of anchors) {
+        const href = a.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        links.push(href);
+    }
+
+    // Also try broader: any card/item that has a clickable link
+    if (links.length === 0) {
+        const allLinks = main.querySelectorAll('a[href]');
+        for (const a of allLinks) {
+            const href = a.href;
+            if (href.includes('/feed/') || href.includes('/posts/')) {
+                if (seen.has(href)) continue;
+                seen.add(href);
+                links.push(href);
+            }
+        }
+    }
+
+    return links;
+}
+"""
+
+EXTRACT_SINGLE_POST_JS = """
+() => {
+    const main = document.querySelector('main') || document.body;
+
+    // On a post detail page, find the post author.
+    // Skip links to self — look for non-nav profile links.
+    let author = '';
+    const profileLinks = main.querySelectorAll('a[href*="/in/"]');
+    for (const a of profileLinks) {
+        // Skip if it's in the sidebar/nav
+        if (a.closest('aside, nav, header')) continue;
+        const text = a.innerText.trim().split('\\n')[0].trim();
+        if (text && text.length > 1 && text.length < 60) {
+            author = text;
+            break;
+        }
+    }
+
+    // Post body: the full page innerText, then parse out the post
+    const fullText = main.innerText || '';
+
+    // Find the post text by looking for the timestamp marker,
+    // then taking everything after "Folgen"/"Follow" until
+    // engagement buttons.
+    const tsMatch = fullText.match(
+        /\\d+\\s*(?:Std|Tag|Min|Wo(?:che)?|Monat|Sek|hr|day|min|wk|mo|sec)[^\\n]*/
+    );
+    let bodyText = '';
+    if (tsMatch) {
+        const afterTs = fullText.substring(
+            fullText.indexOf(tsMatch[0]) + tsMatch[0].length
+        );
+        bodyText = afterTs.replace(/^\\s*(?:Folgen|Follow)\\s*\\n?/, '').trim();
+    }
+
+    // Cut off engagement metrics
+    if (bodyText) {
+        const engageMatch = bodyText.match(
+            /\\n\\s*(?:\\d+\\s+)?(?:Gefällt mir|Kommentar|Like|Comment|Repost|Teilen|Share|Senden|Send|Reaktion)\\b/
+        );
+        if (engageMatch) {
+            bodyText = bodyText.substring(0, engageMatch.index).trim();
+        }
+    }
+
+    // Cut off "mehr" / "...mehr" / "more" / "see more" link text
+    if (bodyText) {
+        const moreMatch = bodyText.match(/\\n\\s*(?:…\\s*)?(?:mehr|more|see more|Übersetzung anzeigen)\\s*$/im);
+        if (moreMatch) {
+            bodyText = bodyText.substring(0, moreMatch.index).trim();
+        }
+    }
+
+    // Strip video player chrome that appears at the start
+    bodyText = bodyText.replace(
+        /^(?:Pause|Play|Skip|Unmute|Mute|Current Time|Duration|Loaded|Stream|Seek|Remaining|Playback|Chapters|Descriptions|Subtitles|Audio|Picture|Fullscreen|LIVE|[0-9:.x%\\-/]+|\\s)+/,
+        ''
+    ).trim();
+
+    // Fall back to longest span if parsing failed
+    if (!bodyText || bodyText.length < 30) {
+        const spans = main.querySelectorAll('span[dir="ltr"]');
+        let longest = '';
+        for (const s of spans) {
+            const t = s.innerText.trim();
+            if (t.length > longest.length && t.length > 30) longest = t;
+        }
+        if (longest) bodyText = longest;
+    }
+
+    return { author, text: bodyText };
+}
+"""
+
+
+async def _launch_browser(headless, profile):
+    from patchright.async_api import async_playwright
+
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch_persistent_context(
+        user_data_dir=profile,
+        headless=headless,
+        viewport={"width": 1280, "height": 900},
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+    page = browser.pages[0] if browser.pages else await browser.new_page()
+    return pw, browser, page
+
+
+async def _navigate(page, url):
+    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    if "/login" in page.url:
+        raise RuntimeError(
+            f"Redirected to login ({page.url}) — session expired. "
+            "Run: uv run python -m linkedin_mcp_server --login"
+        )
+
+
+async def _scrape_saved_posts(page, num_posts, headless):
+    """Scrape saved-posts: get links from listing, visit each post."""
+    await page.wait_for_timeout(3000)
+
+    # Scroll to load all saved posts
+    for _ in range(3):
+        await page.mouse.wheel(0, 1500)
+        await page.wait_for_timeout(1500)
+
+    post_links = await page.evaluate(FIND_SAVED_LINKS_JS)
+    logger.info("Found %d saved post links", len(post_links))
+
+    if not post_links:
+        logger.warning("No saved post links found on page")
+        main_text = await page.evaluate(
+            "() => (document.querySelector('main') || document.body).innerText"
+        )
+        logger.info("Page text (%d chars): %.500s", len(main_text), main_text)
+        return []
+
+    posts = []
+    for i, link in enumerate(post_links[:num_posts]):
+        logger.info("Visiting saved post %d/%d: %s", i + 1, len(post_links), link)
+        try:
+            await _navigate(page, link)
+            await page.wait_for_timeout(3000)
+
+            data = await page.evaluate(EXTRACT_SINGLE_POST_JS)
+            text = data.get("text", "")
+            author = data.get("author", "")
+
+            if text and len(text) > 30:
+                post_id = hashlib.sha256(link.encode()).hexdigest()[:16]
+                posts.append(
+                    {
+                        "post_id": post_id,
+                        "author": author,
+                        "text": text,
+                        "post_url": link,
+                    }
+                )
+                logger.info("  → %s: %d chars", author or "(unknown)", len(text))
+            else:
+                logger.warning("  → post had no content (%d chars)", len(text))
+        except Exception as e:
+            logger.error("  → failed to load post: %s", e)
+
+    return posts
+
+
+async def _scrape_feed_posts(page, num_posts):
+    """Scrape feed page: extract individual posts via DOM."""
+    await page.wait_for_timeout(4000)
+
+    for _ in range(max(num_posts // 2, 4)):
+        await page.mouse.wheel(0, 1500)
+        await page.wait_for_timeout(2000)
+
+    raw_posts = await page.evaluate(EXTRACT_POSTS_JS)
+    logger.info("DOM extraction: %d post candidates", len(raw_posts))
+
+    if not raw_posts:
+        logger.info("DOM found no posts — trying text parser")
+        main_text = await page.evaluate(
+            "() => (document.querySelector('main') || document.body).innerText"
+        )
+        return _parse_feed_text(main_text)
+
+    return raw_posts
+
+
 async def scrape_feed(
     num_posts: int = 10,
     headless: bool = True,
@@ -230,8 +433,6 @@ async def scrape_feed(
 
     Returns a list of dicts with keys: post_id, author, text, post_url.
     """
-    from patchright.async_api import async_playwright
-
     profile = str(PROFILE_DIR)
     if not PROFILE_DIR.exists():
         raise RuntimeError(
@@ -244,98 +445,49 @@ async def scrape_feed(
 
     logger.info("Launching browser (headless=%s)", headless)
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch_persistent_context(
-            user_data_dir=profile,
-            headless=headless,
-            viewport={"width": 1280, "height": 900},
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        page = browser.pages[0] if browser.pages else await browser.new_page()
-
+    pw, browser, page = await _launch_browser(headless, profile)
+    try:
         logger.info("Navigating to %s", url)
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        except Exception as e:
-            logger.error("Navigation failed: %s", e)
-            await browser.close()
-            return []
-
-        if "/login" in page.url:
-            logger.error(
-                "Redirected to login (%s) — session expired. "
-                "Run: uv run python -m linkedin_mcp_server --login",
-                page.url,
-            )
-            await browser.close()
-            return []
-
+        await _navigate(page, url)
         logger.info("Page loaded: %s", page.url)
 
-        # Wait for feed to render
-        await page.wait_for_timeout(4000)
+        if saved:
+            posts = await _scrape_saved_posts(page, num_posts, headless)
+        else:
+            raw_posts = await _scrape_feed_posts(page, num_posts)
+            posts = []
+            seen_texts = set()
+            for p in raw_posts:
+                text = p.get("text", "")
+                if not text or len(text) < 30:
+                    continue
+                sig = text[:200]
+                if sig in seen_texts:
+                    continue
+                seen_texts.add(sig)
 
-        # Scroll to load more posts
-        for scroll in range(max(num_posts // 2, 4)):
-            await page.mouse.wheel(0, 1500)
-            await page.wait_for_timeout(2000)
-
-        # Try DOM-based extraction first
-        raw_posts = await page.evaluate(EXTRACT_POSTS_JS)
-        logger.info(
-            "DOM extraction: %d post candidates from %s", len(raw_posts), label
-        )
-
-        # If DOM found nothing, fall back to innerText parsing
-        if not raw_posts:
-            logger.info("DOM selectors found no posts — trying text parser")
-            main_text = await page.evaluate(
-                "() => (document.querySelector('main') || document.body).innerText"
-            )
-            logger.info("Feed innerText: %d chars", len(main_text))
-            raw_posts = _parse_feed_text(main_text)
-            logger.info("Text parser found %d posts", len(raw_posts))
-
-            if not raw_posts and not headless:
-                logger.info(
-                    "No posts found. Browser is open — inspect the page, "
-                    "then close it."
+                p_url = p.get("url", "")
+                urn = p.get("urn", "")
+                key = p_url or urn or text[:200]
+                post_id = hashlib.sha256(key.encode()).hexdigest()[:16]
+                posts.append(
+                    {
+                        "post_id": post_id,
+                        "author": p.get("author", ""),
+                        "text": text,
+                        "post_url": p_url,
+                    }
                 )
-                try:
-                    await page.wait_for_event("close", timeout=300000)
-                except Exception:
-                    pass
 
-            await browser.close()
-            return raw_posts[:num_posts]
-
+        return posts[:num_posts]
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.error("Scraping failed: %s", e)
+        return []
+    finally:
         await browser.close()
-
-    posts = []
-    seen_texts = set()
-    for p in raw_posts:
-        text = p.get("text", "")
-        if not text or len(text) < 30:
-            continue
-        sig = text[:200]
-        if sig in seen_texts:
-            continue
-        seen_texts.add(sig)
-
-        url = p.get("url", "")
-        urn = p.get("urn", "")
-        key = url or urn or text[:200]
-        post_id = hashlib.sha256(key.encode()).hexdigest()[:16]
-        posts.append(
-            {
-                "post_id": post_id,
-                "author": p.get("author", ""),
-                "text": text,
-                "post_url": url,
-            }
-        )
-
-    return posts[:num_posts]
+        await pw.stop()
 
 
 async def playground(saved: bool = False) -> None:

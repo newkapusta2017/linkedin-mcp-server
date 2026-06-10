@@ -45,7 +45,7 @@ async def _scrape_feed() -> list[dict]:
     """Scrape the LinkedIn feed using standalone Patchright scraper."""
     from pipeline.scraper import scrape_feed
 
-    return await scrape_feed(num_posts=10, headless=True)
+    return await scrape_feed(num_posts=10, headless=True, saved=True)
 
 
 def _run_pipeline(posts: list[dict], *, dry_run: bool = False) -> int:
