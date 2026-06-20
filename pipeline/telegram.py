@@ -332,6 +332,8 @@ def run_bot_loop():
                 )
                 cfp_events, cfp_urls = [], []
                 for ev, cal_ev in zip(data["events"], created):
+                    if cal_ev is None:
+                        continue
                     url = cal_ev.get("htmlLink")
                     notify_created(ev, url, chat_id=data["chat_id"])
                     if ev.get("classification") == "call_for_papers":

@@ -108,9 +108,11 @@ def _run_pipeline(posts: list[dict], *, dry_run: bool = False,
     if with_date:
         logger.info("Creating %d calendar event(s) with dates", len(with_date))
         created = create_events(with_date, token_file=token_file)
-        created_count = len(created)
+        created_count = sum(1 for c in created if c)
         cfp_events, cfp_urls = [], []
         for ev, cal_ev in zip(with_date, created):
+            if cal_ev is None:
+                continue
             url = cal_ev.get("htmlLink")
             notify_created(ev, url, chat_id=chat_id)
             if ev.get("classification") == "call_for_papers":

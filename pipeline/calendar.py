@@ -218,7 +218,7 @@ def create_events(
     logger.info("Creating %d calendar event(s)", len(events_to_create))
     service = _get_service(credentials_file, token_file)
 
-    created: list[dict[str, Any]] = []
+    created: list[dict[str, Any] | None] = []
     for classification in events_to_create:
         try:
             event = create_event(service, classification, calendar_id)
@@ -229,6 +229,11 @@ def create_events(
                 classification.get("post_id", "unknown"),
                 exc,
             )
+            created.append(None)
 
-    logger.info("Created %d of %d calendar events", len(created), len(events_to_create))
+    logger.info(
+        "Created %d of %d calendar events",
+        len([e for e in created if e]),
+        len(events_to_create),
+    )
     return created
