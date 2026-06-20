@@ -22,10 +22,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from datetime import date
+
+import pipeline.cfp as cfp
 from pipeline.calendar import create_events
 from pipeline.classifier import classify_posts
 from pipeline.state import PostStore, get_new_saved_posts
-from pipeline.telegram import notify_created, notify_missing_date
+from pipeline.telegram import notify_created, notify_missing_date, notify_deadline_reminder
 from pipeline.users import list_active_users, user_dir
 
 logger = logging.getLogger("pipeline")
@@ -106,8 +109,15 @@ def _run_pipeline(posts: list[dict], *, dry_run: bool = False,
         logger.info("Creating %d calendar event(s) with dates", len(with_date))
         created = create_events(with_date, token_file=token_file)
         created_count = len(created)
+        cfp_events, cfp_urls = [], []
         for ev, cal_ev in zip(with_date, created):
-            notify_created(ev, cal_ev.get("htmlLink"), chat_id=chat_id)
+            url = cal_ev.get("htmlLink")
+            notify_created(ev, url, chat_id=chat_id)
+            if ev.get("classification") == "call_for_papers":
+                cfp_events.append(ev)
+                cfp_urls.append(url)
+        if cfp_events and token_file is not None:
+            cfp.record_deadlines(Path(token_file).parent, cfp_events, cfp_urls)
 
     for ev in without_date:
         logger.info("Event without date -- sending Telegram prompt: %s", ev.get("title"))
@@ -153,6 +163,15 @@ def _parse_args() -> argparse.Namespace:
         help="Run Telegram bot loop to handle date replies for pending events",
     )
     return parser.parse_args()
+
+
+def _run_due_reminders(today=None):
+    """Send Telegram reminders for CfP deadlines now within the reminder window."""
+    today = today or date.today()
+    for user in list_active_users():
+        ud = user_dir(user["id"])
+        for rec in cfp.due_reminders(ud, today):
+            notify_deadline_reminder(rec, chat_id=user["telegram_chat_id"])
 
 
 def main() -> None:
@@ -228,6 +247,11 @@ def main() -> None:
                 logger.exception("Pipeline failed for user %s", uid)
 
         logger.info("Run #%d complete", run_count)
+
+        try:
+            _run_due_reminders()
+        except Exception:
+            logger.exception("CfP reminder pass failed")
 
         if not args.loop:
             break

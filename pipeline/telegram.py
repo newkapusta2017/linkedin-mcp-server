@@ -330,8 +330,16 @@ def run_bot_loop():
                 created = create_events(
                     data["events"], token_file=data["token_file"]
                 )
+                cfp_events, cfp_urls = [], []
                 for ev, cal_ev in zip(data["events"], created):
-                    notify_created(ev, cal_ev.get("htmlLink"), chat_id=data["chat_id"])
+                    url = cal_ev.get("htmlLink")
+                    notify_created(ev, url, chat_id=data["chat_id"])
+                    if ev.get("classification") == "call_for_papers":
+                        cfp_events.append(ev)
+                        cfp_urls.append(url)
+                if cfp_events:
+                    from pipeline import cfp
+                    cfp.record_deadlines(data["token_file"].parent, cfp_events, cfp_urls)
 
         except KeyboardInterrupt:
             logger.info("Bot loop stopped")
