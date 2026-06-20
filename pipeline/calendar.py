@@ -119,9 +119,13 @@ def _build_event_body(classification: dict[str, Any]) -> dict[str, Any]:
     start_time = classification.get("start_time")
     end_time = classification.get("end_time")
     post_id = classification.get("post_id", "")
+    is_cfp = classification.get("classification") == "call_for_papers"
 
     if description and post_id:
         description += f"\n\n[pipeline post_id: {post_id}]"
+
+    if is_cfp:
+        title = f"CfP Deadline: {title}"
 
     event: dict[str, Any] = {
         "summary": title,
@@ -131,7 +135,18 @@ def _build_event_body(classification: dict[str, Any]) -> dict[str, Any]:
     if location:
         event["location"] = location
 
-    if date_str and start_time:
+    if is_cfp and date_str:
+        # A submission deadline is a day, not a meeting: all-day + 14-day reminder.
+        event["start"] = {"date": date_str}
+        event["end"] = {"date": date_str}
+        event["reminders"] = {
+            "useDefault": False,
+            "overrides": [
+                {"method": "popup", "minutes": 20160},
+                {"method": "email", "minutes": 20160},
+            ],
+        }
+    elif date_str and start_time:
         start_dt = datetime.fromisoformat(f"{date_str}T{start_time}:00")
         if end_time:
             end_dt = datetime.fromisoformat(f"{date_str}T{end_time}:00")
