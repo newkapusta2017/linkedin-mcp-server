@@ -16,6 +16,8 @@ from typing import Any
 
 import anthropic
 
+from pipeline import cfp
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -49,6 +51,32 @@ Rules:
   given, use the first day of that month/season.
 - Times are 24-hour format.  If not mentioned, set to null.
 - Keep "description" to one sentence.
+"""
+
+CFP_SYSTEM_PROMPT = """\
+You are extracting the submission deadline from a LinkedIn "Call for Papers" post.
+
+Respond with a single JSON object — no markdown fences, no commentary.
+
+Schema:
+
+{
+  "classification": "call_for_papers",
+  "title": "string or null",
+  "date": "ISO 8601 date or null",
+  "start_time": null,
+  "end_time": null,
+  "location": "string or null",
+  "description": "one-line summary or null"
+}
+
+Rules:
+- "date" MUST be the SUBMISSION DEADLINE — the last date to submit papers or
+  abstracts. This is NOT the conference/event date.
+- If a submission date RANGE is given, use the END date.
+- If no submission deadline can be found, set "date" to null.
+- Dates are ISO 8601 (YYYY-MM-DD). If only a month is given, use its last day.
+- "title" is the conference/workshop/journal name. Keep "description" to one sentence.
 """
 
 NONE_RESULT: dict[str, Any] = {
@@ -105,6 +133,24 @@ def _classify_post_local(post: dict[str, Any]) -> dict[str, Any]:
     """Keyword-based classifier for dry-run mode (no API needed)."""
     text = (post.get("text") or "").lower()
     author = post.get("author") or ""
+
+    if cfp.is_call_for_papers(text):
+        date_str = None
+        m = DATE_PATTERN.search(post.get("text") or "")
+        if m:
+            day = m.group(1).zfill(2)
+            month = MONTH_MAP[m.group(2).lower()]
+            year = m.group(3) or str(__import__("datetime").date.today().year)
+            date_str = f"{year}-{month}-{day}"
+        return {
+            "classification": "call_for_papers",
+            "title": f"Call for Papers from {author}" if author else "Call for Papers",
+            "date": date_str,
+            "start_time": None,
+            "end_time": None,
+            "location": None,
+            "description": (post.get("text") or "")[:100],
+        }
 
     classification = "none"
     for kw in INVITE_KEYWORDS:
@@ -186,8 +232,9 @@ def classify_post(post: dict[str, Any]) -> dict[str, Any]:
         logger.debug("Skipping post with empty text (post_id=%s)", post.get("post_id"))
         return dict(NONE_RESULT)
 
+    is_cfp = cfp.is_call_for_papers(text)
+    system_prompt = CFP_SYSTEM_PROMPT if is_cfp else SYSTEM_PROMPT
     user_message = f"Author: {author}\n\nPost:\n{text}"
-
     model = os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
 
     try:
@@ -195,7 +242,7 @@ def classify_post(post: dict[str, Any]) -> dict[str, Any]:
         response = client.messages.create(
             model=model,
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
         )
     except RuntimeError as exc:
@@ -216,10 +263,13 @@ def classify_post(post: dict[str, Any]) -> dict[str, Any]:
     if result is None:
         return dict(NONE_RESULT)
 
-    classification = result.get("classification", "none")
-    if classification not in ("invitation", "save_the_date", "none"):
-        logger.warning("Unknown classification %r — defaulting to none", classification)
-        classification = "none"
+    if is_cfp:
+        classification = "call_for_papers"     # gate decides; model can't override
+    else:
+        classification = result.get("classification", "none")
+        if classification not in ("invitation", "save_the_date", "none"):
+            logger.warning("Unknown classification %r — defaulting to none", classification)
+            classification = "none"
 
     return {
         "classification": classification,
