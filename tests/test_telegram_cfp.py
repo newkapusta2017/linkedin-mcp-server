@@ -1,0 +1,31 @@
+import pipeline.telegram as tg
+
+
+def test_notify_deadline_reminder_sends_expected(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tg, "_token", lambda: "TESTTOKEN")
+    monkeypatch.setattr(tg, "_api", lambda method, **params: calls.append((method, params)) or {"message_id": 1})
+
+    tg.notify_deadline_reminder(
+        {"title": "ICA 2027", "deadline": "2026-11-15", "days_left": 14,
+         "calendar_url": "http://cal/x"},
+        chat_id="999",
+    )
+
+    assert len(calls) == 1
+    method, params = calls[0]
+    assert method == "sendMessage"
+    assert params["chat_id"] == "999"
+    assert "14" in params["text"]
+    assert "ICA 2027" in params["text"]
+    assert "2026-11-15" in params["text"]
+    assert "http://cal/x" in params["text"]
+
+
+def test_notify_deadline_reminder_noop_without_chat(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tg, "_token", lambda: "TESTTOKEN")
+    monkeypatch.setattr(tg, "_chat_id", lambda: None)
+    monkeypatch.setattr(tg, "_api", lambda *a, **k: calls.append(1))
+    tg.notify_deadline_reminder({"title": "X", "deadline": "2026-01-01", "days_left": 3})
+    assert calls == []

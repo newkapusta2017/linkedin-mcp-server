@@ -82,6 +82,24 @@ def notify_created(event, calendar_url=None, chat_id=None):
     _api("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
 
 
+def notify_deadline_reminder(record, chat_id=None):
+    """Telegram reminder that a CfP submission deadline is approaching."""
+    chat_id = chat_id or _chat_id()
+    if not chat_id or not _token():
+        return
+
+    title = record.get("title") or "Call for Papers"
+    deadline = record.get("deadline") or "?"
+    days_left = record.get("days_left")
+    when = f"in {days_left} day(s)" if days_left is not None else "soon"
+
+    text = f"⏰ <b>CfP deadline {when}</b>\n{title}\n\U0001f4c5 {deadline}"
+    if record.get("calendar_url"):
+        text += f'\n\U0001f517 <a href="{record["calendar_url"]}">Open in Calendar</a>'
+
+    _api("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
+
+
 def notify_missing_date(event, chat_id=None, pending_file=None):
     """Send notification for an event without a date, asking user to reply."""
     chat_id = chat_id or _reply_chat_id()
