@@ -1,9 +1,11 @@
 """FastAPI web app for multi-user onboarding."""
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 from pathlib import Path
@@ -25,6 +27,29 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _vnc_sessions: dict[str, dict] = {}
 _NEXT_DISPLAY = 10
 _NEXT_WS_PORT = 6080
+
+
+def _chromium_binary() -> str:
+    """Resolve a Chromium executable.
+
+    Prefer a system install if present, otherwise fall back to the Chromium
+    bundled with Patchright/Playwright (version-globbed so it survives upgrades).
+    """
+    for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    candidates = sorted(
+        glob.glob(os.path.expanduser(
+            "~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome"
+        )),
+        reverse=True,
+    )
+    if candidates:
+        return candidates[0]
+    raise FileNotFoundError(
+        "No Chromium binary found (system PATH or ms-playwright cache)"
+    )
 
 
 @app.get("/setup", response_class=HTMLResponse)
@@ -85,7 +110,7 @@ def _start_vnc(user_id: str) -> int:
     pids.append(openbox.pid)
 
     chromium = subprocess.Popen([
-        "chromium", "--no-sandbox",
+        _chromium_binary(), "--no-sandbox",
         f"--user-data-dir={profile}",
         f"--display=:{display}",
         "--disable-gpu", "--disable-software-rasterizer",
